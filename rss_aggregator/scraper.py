@@ -5,10 +5,11 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import trafilatura
+from lxml import html as lxml_html
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,8 @@ def _fetch_with_playwright(url: str) -> ScrapeResult:
 
 def _extract_content(html: str, url: str) -> ScrapeResult:
     """从 HTML 提取文章正文并下载图片"""
+    html_image_urls = _extract_image_urls(html, url)
+
     content = trafilatura.extract(
         html,
         url=url,
@@ -95,36 +98,70 @@ def _extract_content(html: str, url: str) -> ScrapeResult:
         logger.warning("未能从 %s 提取到内容", url)
         return ScrapeResult(content="", success=False, error="未找到文章正文内容")
 
-    content, downloaded_images = _download_images(content)
+    content, downloaded_images = _process_images(content, html_image_urls)
 
     return ScrapeResult(content=content, success=True, images=downloaded_images)
 
 
-def _download_images(markdown: str) -> tuple[str, list[str]]:
-    """从 Markdown 中提取图片 URL，下载到本地，替换链接
+def _extract_image_urls(html: str, base_url: str) -> list[str]:
+    """从 HTML 中提取所有图片 URL，解析相对路径"""
+    try:
+        tree = lxml_html.fromstring(html)
+    except Exception:
+        return []
+
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    for img in tree.iter("img"):
+        src = img.get("src", "").strip()
+        if not src or src.startswith("data:"):
+            continue
+
+        absolute_url = urljoin(base_url, src)
+        if absolute_url not in seen:
+            seen.add(absolute_url)
+            urls.append(absolute_url)
+
+    return urls
+
+
+def _process_images(markdown: str, html_image_urls: list[str]) -> tuple[str, list[str]]:
+    """下载图片，替换 Markdown 中的链接，剩余图片追加到末尾
 
     Returns:
-        (替换后的markdown, 已下载的本地图片路径列表)
+        (处理后的markdown, 已下载的本地图片路径列表)
     """
-    image_urls = IMAGE_URL_PATTERN.findall(markdown)
-    if not image_urls:
+    if not html_image_urls:
         return markdown, []
 
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
+    url_to_local: dict[str, str | None] = {}
+    for img_url in html_image_urls:
+        url_to_local[img_url] = _download_single_image(img_url)
+
+    markdown_urls = set(IMAGE_URL_PATTERN.findall(markdown))
     downloaded: list[str] = []
-    seen_urls: dict[str, str] = {}
+    appended: list[str] = []
 
-    for img_url in image_urls:
-        if img_url in seen_urls:
-            local_path = seen_urls[img_url]
-        else:
-            local_path = _download_single_image(img_url)
-            seen_urls[img_url] = local_path
+    for img_url, local_path in url_to_local.items():
+        if not local_path:
+            continue
 
-        if local_path:
+        downloaded.append(local_path)
+
+        if img_url in markdown_urls:
             markdown = markdown.replace(img_url, local_path)
-            downloaded.append(local_path)
+        else:
+            appended.append(local_path)
+
+    if appended:
+        lines = ["", "---", ""]
+        for path in appended:
+            lines.append(f"![]({path})")
+            lines.append("")
+        markdown = markdown.rstrip() + "\n" + "\n".join(lines)
 
     return markdown, downloaded
 
