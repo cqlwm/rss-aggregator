@@ -31,6 +31,10 @@ uv sync
 添加 RSS 源 → 抓取订阅内容 → 浏览文章列表 → 抓取感兴趣文章的全文 → 阅读
 ```
 
+> 在 Openclaw 、 claudecode 等agents中使用
+> 使用 `uv run --project /Users/li/projects/rss-aggregator rss-aggregator xxxx` 命令使用rss-aggregator工具
+> `uv run --project <rss-aggregator-project-path> rss-aggregator <command>`
+
 ### 1. 添加 RSS 源
 
 ```bash
@@ -112,7 +116,7 @@ rss-aggregator mark-read 42
 ### 7. 定时自动抓取
 
 ```bash
-# 安装定时任务（默认每 60 分钟抓取一次）
+# 安装定时任务
 rss-aggregator cron install --interval 30
 
 # 查看定时任务状态
