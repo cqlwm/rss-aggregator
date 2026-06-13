@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from rss_aggregator.cli import cli
+from rss_aggregator.cli import CONTENT_CACHE_DIR, cli
 from rss_aggregator.database import Database
 from rss_aggregator.models import Article, Source
 
@@ -180,118 +180,99 @@ def test_cron_status_not_installed(mock_is_installed):
 
 
 @patch("rss_aggregator.cli.fetch_article_content")
-@patch("rss_aggregator.cli.get_db")
-def test_fetch_content_by_article_id(mock_get_db, mock_fetch):
-    """测试按文章ID抓取全文"""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
+def test_fetch_content_success(mock_fetch):
+    """测试 URL 抓取成功并写入缓存"""
+    from rss_aggregator.scraper import ScrapeResult
 
-    try:
-        db = Database(db_path)
-        mock_get_db.return_value = db
+    mock_fetch.return_value = ScrapeResult(content="# Full Content", success=True)
 
-        source = db.add_source(Source(url="https://example.com/rss", name="Test"))
-        article = db.add_article(
-            Article(
-                source_id=source.id,
-                title="Test Article",
-                url="https://example.com/article",
-            )
-        )
-
-        from rss_aggregator.scraper import ScrapeResult
-
-        mock_fetch.return_value = ScrapeResult(content="# Full Content", success=True)
-
-        runner = get_test_runner()
-        result = runner.invoke(cli, ["fetch-content", str(article.id)])
-        assert result.exit_code == 0
-        assert "已存储全文内容" in result.output
-
-        updated = db.get_article(article.id)
-        assert updated.content == "# Full Content"
-    finally:
-        db_path.unlink(missing_ok=True)
-
-
-@patch("rss_aggregator.cli.fetch_article_content")
-@patch("rss_aggregator.cli.get_db")
-def test_fetch_content_by_url(mock_get_db, mock_fetch):
-    """测试按URL抓取全文"""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-
-    try:
-        db = Database(db_path)
-        mock_get_db.return_value = db
-
-        source = db.add_source(Source(url="https://example.com/rss", name="Test"))
-        article = db.add_article(
-            Article(
-                source_id=source.id,
-                title="Test Article",
-                url="https://example.com/article",
-            )
-        )
-
-        from rss_aggregator.scraper import ScrapeResult
-
-        mock_fetch.return_value = ScrapeResult(content="URL content", success=True)
-
-        runner = get_test_runner()
-        result = runner.invoke(cli, ["fetch-content", "https://example.com/article"])
-        assert result.exit_code == 0
-        assert "已匹配并更新文章" in result.output
-
-        updated = db.get_article(article.id)
-        assert updated.content == "URL content"
-    finally:
-        db_path.unlink(missing_ok=True)
-
-
-@patch("rss_aggregator.cli.fetch_article_content")
-def test_fetch_content_not_found(mock_fetch):
-    """测试文章不存在"""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-
-    try:
-        with patch("rss_aggregator.cli.get_db") as mock_get_db:
-            mock_get_db.return_value = Database(db_path)
-
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("rss_aggregator.cli.CONTENT_CACHE_DIR", Path(tmpdir)):
             runner = get_test_runner()
-            result = runner.invoke(cli, ["fetch-content", "999"])
-            assert result.exit_code == 1
-            assert "未找到文章" in result.output
-    finally:
-        db_path.unlink(missing_ok=True)
+            result = runner.invoke(cli, ["fetch-content", "https://example.com/article"])
+            assert result.exit_code == 0
+            assert "# Full Content" in result.output
+            mock_fetch.assert_called_once()
+
+            cache_files = list(Path(tmpdir).glob("*.md"))
+            assert len(cache_files) == 1
+            assert cache_files[0].read_text(encoding="utf-8") == "# Full Content"
 
 
 @patch("rss_aggregator.cli.fetch_article_content")
-@patch("rss_aggregator.cli.get_db")
-def test_fetch_content_already_has_content(mock_get_db, mock_fetch):
-    """测试文章已有全文内容"""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
+def test_fetch_content_cache_hit(mock_fetch):
+    """测试命中缓存时不调用抓取"""
+    import hashlib
 
-    try:
-        db = Database(db_path)
-        mock_get_db.return_value = db
+    url = "https://example.com/article"
+    cache_key = hashlib.md5(url.encode()).hexdigest()
 
-        source = db.add_source(Source(url="https://example.com/rss", name="Test"))
-        article = db.add_article(
-            Article(
-                source_id=source.id,
-                title="Test Article",
-                url="https://example.com/article",
-                content="Existing content",
-            )
-        )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_file = Path(tmpdir) / f"{cache_key}.md"
+        cache_file.write_text("cached content", encoding="utf-8")
 
-        runner = get_test_runner()
-        result = runner.invoke(cli, ["fetch-content", str(article.id)])
-        assert result.exit_code == 0
-        assert "已有全文内容" in result.output
-        mock_fetch.assert_not_called()
-    finally:
-        db_path.unlink(missing_ok=True)
+        with patch("rss_aggregator.cli.CONTENT_CACHE_DIR", Path(tmpdir)):
+            runner = get_test_runner()
+            result = runner.invoke(cli, ["fetch-content", url])
+            assert result.exit_code == 0
+            assert "命中缓存" in result.output
+            assert "cached content" in result.output
+            mock_fetch.assert_not_called()
+
+
+@patch("rss_aggregator.cli.fetch_article_content")
+def test_fetch_content_no_cache(mock_fetch):
+    """测试 --no-cache 跳过缓存"""
+    import hashlib
+
+    from rss_aggregator.scraper import ScrapeResult
+
+    mock_fetch.return_value = ScrapeResult(content="fresh content", success=True)
+
+    url = "https://example.com/article"
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_file = Path(tmpdir) / f"{cache_key}.md"
+        cache_file.write_text("old cached content", encoding="utf-8")
+
+        with patch("rss_aggregator.cli.CONTENT_CACHE_DIR", Path(tmpdir)):
+            runner = get_test_runner()
+            result = runner.invoke(cli, ["fetch-content", url, "--no-cache"])
+            assert result.exit_code == 0
+            assert "fresh content" in result.output
+            mock_fetch.assert_called_once()
+
+
+@patch("rss_aggregator.cli.fetch_article_content")
+def test_fetch_content_failure(mock_fetch):
+    """测试抓取失败"""
+    from rss_aggregator.scraper import ScrapeResult
+
+    mock_fetch.return_value = ScrapeResult(content="", success=False, error="连接超时")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("rss_aggregator.cli.CONTENT_CACHE_DIR", Path(tmpdir)):
+            runner = get_test_runner()
+            result = runner.invoke(cli, ["fetch-content", "https://example.com/article"])
+            assert result.exit_code == 1
+            assert "抓取失败" in result.output
+            assert "连接超时" in result.output
+
+
+@patch("rss_aggregator.cli.fetch_article_content")
+def test_fetch_content_output_file(mock_fetch):
+    """测试 --output 写入文件"""
+    from rss_aggregator.scraper import ScrapeResult
+
+    mock_fetch.return_value = ScrapeResult(content="# Output Content", success=True)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_file = Path(tmpdir) / "output.md"
+
+        with patch("rss_aggregator.cli.CONTENT_CACHE_DIR", Path(tmpdir)):
+            runner = get_test_runner()
+            result = runner.invoke(cli, ["fetch-content", "https://example.com/article", "-o", str(output_file)])
+            assert result.exit_code == 0
+            assert "已写入" in result.output
+            assert output_file.read_text(encoding="utf-8") == "# Output Content"

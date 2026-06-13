@@ -1,5 +1,6 @@
 """CLI命令定义"""
 
+import hashlib
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,6 +18,8 @@ from rss_aggregator.scraper import fetch_article_content
 from rss_aggregator.scheduler import fetch_all_sources, get_cron_schedule, install_cron, is_installed, remove_cron
 
 console = Console()
+
+CONTENT_CACHE_DIR = Path.home() / ".rss-aggregator" / "content"
 
 
 def get_db() -> Database:
@@ -256,36 +259,24 @@ def mark_read_cmd(article_id: int) -> None:
 
 
 @cli.command("fetch-content")
-@click.argument("target")
+@click.argument("url")
 @click.option("--playwright", "-p", is_flag=True, help="使用 Playwright 渲染 JS 页面")
 @click.option("--output", "-o", help="输出内容到文件")
-def fetch_content_cmd(target: str, playwright: bool, output: str | None) -> None:
-    """抓取文章全文内容
+@click.option("--no-cache", is_flag=True, help="跳过缓存，强制重新抓取")
+def fetch_content_cmd(url: str, playwright: bool, output: str | None, no_cache: bool) -> None:
+    """抓取 URL 全文内容并显示"""
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+    cache_file = CONTENT_CACHE_DIR / f"{cache_key}.md"
 
-    TARGET 可以是文章 ID（整数）或 URL 链接
-    """
-    db = get_db()
-
-    if target.isdigit():
-        article_id = int(target)
-        article = db.get_article(article_id)
-        if not article:
-            console.print(f"[red]错误：未找到文章 ID: {article_id}[/red]")
-            sys.exit(1)
-
-        if article.content:
-            console.print("[yellow]文章已有全文内容，跳过抓取[/yellow]")
-            if output:
-                Path(output).write_text(article.content, encoding="utf-8")
-                console.print(f"[green]已写入 {output}[/green]")
-            else:
-                console.print(article.content)
-            return
-
-        url = article.url
-    else:
-        url = target
-        article = None
+    if not no_cache and cache_file.exists():
+        content = cache_file.read_text(encoding="utf-8")
+        console.print(f"[yellow]命中缓存: {cache_file}[/yellow]")
+        if output:
+            Path(output).write_text(content, encoding="utf-8")
+            console.print(f"[green]已写入 {output}[/green]")
+        else:
+            console.print(content)
+        return
 
     console.print(f"正在抓取: {url}")
     result = fetch_article_content(url, use_playwright=playwright)
@@ -294,21 +285,13 @@ def fetch_content_cmd(target: str, playwright: bool, output: str | None) -> None
         console.print(f"[red]抓取失败: {result.error}[/red]")
         sys.exit(1)
 
-    if article and article.id:
-        db.update_article_content(article.id, result.content)
-        console.print(f"[green]已存储全文内容（{len(result.content)} 字符）[/green]")
-    elif article is None:
-        matched = db.get_article_by_url(url)
-        if matched and matched.id:
-            db.update_article_content(matched.id, result.content)
-            console.print(f"[green]已匹配并更新文章 #{matched.id} 的全文内容[/green]")
-        else:
-            console.print(f"[green]抓取成功（{len(result.content)} 字符）[/green]")
+    CONTENT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file.write_text(result.content, encoding="utf-8")
 
     if output:
         Path(output).write_text(result.content, encoding="utf-8")
         console.print(f"[green]已写入 {output}[/green]")
-    elif not article:
+    else:
         console.print(result.content)
 
 

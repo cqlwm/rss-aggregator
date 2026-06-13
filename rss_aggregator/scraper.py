@@ -172,7 +172,7 @@ def _download_single_image(url: str) -> str | None:
     Returns:
         本地文件路径，失败返回 None
     """
-    url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
+    url_hash = hashlib.md5(url.encode()).hexdigest()
     ext = _guess_extension(url)
     filename = f"{url_hash}{ext}"
     local_path = IMAGES_DIR / filename
