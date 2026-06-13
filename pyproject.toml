@@ -1,7 +1,28 @@
 [project]
 name = "rss-aggregator"
 version = "0.1.0"
-description = "Add your description here"
+description = "RSS订阅内容收集器 - 为OpenCalw提供RSS数据"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "click>=8.4.1",
+    "feedparser>=6.0.12",
+    "httpx>=0.28.1",
+    "rich>=15.0.0",
+    "schedule>=1.2.2",
+]
+
+[project.scripts]
+rss-aggregator = "rss_aggregator.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pyright]
+typeCheckingMode = "strict"
