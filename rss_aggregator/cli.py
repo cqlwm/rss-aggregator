@@ -13,7 +13,7 @@ from rss_aggregator.exporter import sources_to_json, to_json, to_markdown
 from rss_aggregator.fetcher import fetch_feed
 from rss_aggregator.importer import parse_opml, to_opml
 from rss_aggregator.models import Source
-from rss_aggregator.scheduler import fetch_all_sources, is_running, start_scheduler, stop_scheduler
+from rss_aggregator.scheduler import fetch_all_sources, get_cron_schedule, install_cron, is_installed, remove_cron
 
 console = Console()
 
@@ -308,44 +308,48 @@ def export_cmd(fmt: str, output: str | None) -> None:
 
 
 @cli.group()
-def daemon() -> None:
-    """定时任务管理"""
+def cron() -> None:
+    """Crontab定时任务管理"""
     pass
 
 
-@daemon.command("start")
+@cron.command("install")
 @click.option("--interval", "-i", default=60, help="抓取间隔（分钟）")
-def daemon_start(interval: int) -> None:
-    """启动定时抓取"""
-    if is_running():
-        console.print("[yellow]定时任务已在运行中[/yellow]")
+def cron_install(interval: int) -> None:
+    """安装crontab定时任务"""
+    if is_installed():
+        console.print("[yellow]定时任务已安装，将覆盖现有配置[/yellow]")
+
+    if install_cron(interval):
+        console.print(f"[green]成功安装定时任务，每 {interval} 分钟抓取一次[/green]")
+    else:
+        console.print("[red]安装定时任务失败[/red]")
+        sys.exit(1)
+
+
+@cron.command("remove")
+def cron_remove() -> None:
+    """移除crontab定时任务"""
+    if not is_installed():
+        console.print("[yellow]定时任务未安装[/yellow]")
         return
 
-    db = get_db()
-    console.print(f"[green]启动定时任务，每 {interval} 分钟抓取一次[/green]")
-
-    try:
-        start_scheduler(db, interval)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]定时任务已停止[/yellow]")
-
-
-@daemon.command("stop")
-def daemon_stop() -> None:
-    """停止定时抓取"""
-    if stop_scheduler():
-        console.print("[green]定时任务已停止[/green]")
+    if remove_cron():
+        console.print("[green]成功移除定时任务[/green]")
     else:
-        console.print("[yellow]定时任务未在运行[/yellow]")
+        console.print("[red]移除定时任务失败[/red]")
+        sys.exit(1)
 
 
-@daemon.command("status")
-def daemon_status() -> None:
+@cron.command("status")
+def cron_status() -> None:
     """查看定时任务状态"""
-    if is_running():
-        console.print("[green]定时任务正在运行[/green]")
+    if is_installed():
+        schedule = get_cron_schedule()
+        console.print(f"[green]定时任务已安装[/green]")
+        console.print(f"调度计划: {schedule}")
     else:
-        console.print("[yellow]定时任务未在运行[/yellow]")
+        console.print("[yellow]定时任务未安装[/yellow]")
 
 
 def main() -> None:

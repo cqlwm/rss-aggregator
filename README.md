@@ -82,14 +82,14 @@ rss-aggregator export --format json
 ### 定时任务
 
 ```bash
-# 启动定时抓取（每60分钟）
-rss-aggregator daemon start --interval 60
+# 安装定时抓取（每60分钟）
+rss-aggregator cron install --interval 60
 
-# 停止定时任务
-rss-aggregator daemon stop
+# 移除定时任务
+rss-aggregator cron remove
 
 # 查看状态
-rss-aggregator daemon status
+rss-aggregator cron status
 ```
 
 ## 输出格式
@@ -163,4 +163,3 @@ rss-aggregator/
 - httpx: HTTP客户端
 - click: CLI框架
 - rich: 终端美化输出
-- schedule: 定时任务

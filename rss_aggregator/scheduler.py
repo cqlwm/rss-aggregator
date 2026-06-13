@@ -1,18 +1,17 @@
-"""定时任务管理"""
+"""Crontab定时任务管理"""
 
 import logging
-import signal
+import subprocess
 import sys
 from pathlib import Path
-
-import schedule
 
 from rss_aggregator.database import Database
 from rss_aggregator.fetcher import fetch_feed
 
 logger = logging.getLogger(__name__)
 
-PID_FILE = Path.home() / ".rss-aggregator" / "scheduler.pid"
+CRON_MARKER = "# rss-aggregator cron job"
+LOG_FILE = Path.home() / ".rss-aggregator" / "cron.log"
 
 
 def fetch_all_sources(db: Database, limit: int | None = None) -> int:
@@ -38,71 +37,75 @@ def fetch_all_sources(db: Database, limit: int | None = None) -> int:
     return total_new
 
 
-def start_scheduler(db: Database, interval_minutes: int = 60) -> None:
-    """启动定时任务调度器"""
-
-    def job() -> None:
-        logger.info("开始定时抓取...")
-        try:
-            new_count = fetch_all_sources(db)
-            logger.info("定时抓取完成，新增 %d 篇文章", new_count)
-        except Exception:
-            logger.exception("定时抓取失败")
-
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text(str(sys.pid))
-
-    signal.signal(signal.SIGTERM, _handle_shutdown)
-    signal.signal(signal.SIGINT, _handle_shutdown)
-
-    schedule.every(interval_minutes).minutes.do(job)
-
-    logger.info("定时任务已启动，每 %d 分钟抓取一次", interval_minutes)
-
-    job()
-
-    while True:
-        schedule.run_pending()
-        import time
-
-        time.sleep(1)
+def _get_crontab() -> str:
+    """获取当前用户的crontab内容"""
+    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    if result.returncode == 0:
+        return result.stdout
+    return ""
 
 
-def stop_scheduler() -> bool:
-    """停止定时任务调度器"""
-    if not PID_FILE.exists():
-        return False
-
-    try:
-        pid = int(PID_FILE.read_text().strip())
-        import os
-
-        os.kill(pid, signal.SIGTERM)
-        PID_FILE.unlink(missing_ok=True)
-        return True
-    except (ValueError, ProcessLookupError):
-        PID_FILE.unlink(missing_ok=True)
-        return False
+def _set_crontab(content: str) -> bool:
+    """设置crontab内容"""
+    result = subprocess.run(
+        ["crontab", "-"],
+        input=content,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
 
 
-def is_running() -> bool:
-    """检查调度器是否在运行"""
-    if not PID_FILE.exists():
-        return False
+def install_cron(interval_minutes: int = 60) -> bool:
+    """安装crontab定时任务"""
+    current_cron = _get_crontab()
 
-    try:
-        pid = int(PID_FILE.read_text().strip())
-        import os
+    lines = [line for line in current_cron.splitlines() if CRON_MARKER not in line]
 
-        os.kill(pid, 0)
-        return True
-    except (ValueError, ProcessLookupError, PermissionError):
-        PID_FILE.unlink(missing_ok=True)
-        return False
+    project_dir = Path(__file__).parent.parent
+    cmd = f"uv run --project {project_dir} rss-aggregator fetch"
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    if interval_minutes < 60:
+        cron_schedule = f"*/{interval_minutes} * * * *"
+    elif interval_minutes == 60:
+        cron_schedule = "0 * * * *"
+    else:
+        hours = interval_minutes // 60
+        cron_schedule = f"0 */{hours} * * *"
+
+    new_line = f"{cron_schedule} {cmd} >> {LOG_FILE} 2>&1 {CRON_MARKER}"
+    lines.append(new_line)
+
+    new_cron = "\n".join(lines) + "\n"
+    return _set_crontab(new_cron)
 
 
-def _handle_shutdown(signum: int, frame: object) -> None:
-    """处理关闭信号"""
-    logger.info("收到关闭信号，正在停止...")
-    PID_FILE.unlink(missing_ok=True)
-    sys.exit(0)
+def remove_cron() -> bool:
+    """移除crontab定时任务"""
+    current_cron = _get_crontab()
+
+    lines = [line for line in current_cron.splitlines() if CRON_MARKER not in line]
+
+    new_cron = "\n".join(lines)
+    if new_cron.strip():
+        new_cron += "\n"
+
+    return _set_crontab(new_cron)
+
+
+def is_installed() -> bool:
+    """检查定时任务是否已安装"""
+    current_cron = _get_crontab()
+    return CRON_MARKER in current_cron
+
+
+def get_cron_schedule() -> str | None:
+    """获取当前的cron调度配置"""
+    current_cron = _get_crontab()
+    for line in current_cron.splitlines():
+        if CRON_MARKER in line:
+            parts = line.split()
+            if len(parts) >= 5:
+                return " ".join(parts[:5])
+    return None

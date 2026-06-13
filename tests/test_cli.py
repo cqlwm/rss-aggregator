@@ -125,3 +125,54 @@ def test_help():
     assert "fetch" in result.output
     assert "read" in result.output
     assert "search" in result.output
+    assert "cron" in result.output
+
+
+@patch("rss_aggregator.cli.is_installed")
+@patch("rss_aggregator.cli.install_cron")
+def test_cron_install(mock_install, mock_is_installed):
+    """测试安装定时任务"""
+    mock_is_installed.return_value = False
+    mock_install.return_value = True
+    runner = get_test_runner()
+
+    result = runner.invoke(cli, ["cron", "install", "--interval", "30"])
+    assert result.exit_code == 0
+    assert "成功安装定时任务" in result.output
+
+
+@patch("rss_aggregator.cli.is_installed")
+@patch("rss_aggregator.cli.remove_cron")
+def test_cron_remove(mock_remove, mock_is_installed):
+    """测试移除定时任务"""
+    mock_is_installed.return_value = True
+    mock_remove.return_value = True
+    runner = get_test_runner()
+
+    result = runner.invoke(cli, ["cron", "remove"])
+    assert result.exit_code == 0
+    assert "成功移除定时任务" in result.output
+
+
+@patch("rss_aggregator.cli.is_installed")
+@patch("rss_aggregator.cli.get_cron_schedule")
+def test_cron_status_installed(mock_get_schedule, mock_is_installed):
+    """测试查看已安装的定时任务状态"""
+    mock_is_installed.return_value = True
+    mock_get_schedule.return_value = "0 * * * *"
+    runner = get_test_runner()
+
+    result = runner.invoke(cli, ["cron", "status"])
+    assert result.exit_code == 0
+    assert "定时任务已安装" in result.output
+
+
+@patch("rss_aggregator.cli.is_installed")
+def test_cron_status_not_installed(mock_is_installed):
+    """测试查看未安装的定时任务状态"""
+    mock_is_installed.return_value = False
+    runner = get_test_runner()
+
+    result = runner.invoke(cli, ["cron", "status"])
+    assert result.exit_code == 0
+    assert "定时任务未安装" in result.output
