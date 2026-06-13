@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS articles (
     author TEXT,
     published_at TIMESTAMP,
     summary TEXT,
+    content TEXT DEFAULT '',
     tags TEXT DEFAULT '[]',
     is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -55,6 +56,13 @@ class Database:
             conn.execute(CREATE_SOURCES_TABLE)
             conn.execute(CREATE_ARTICLES_TABLE)
             conn.execute("PRAGMA foreign_keys = ON")
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """数据库迁移"""
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(articles)").fetchall()}
+        if "content" not in columns:
+            conn.execute("ALTER TABLE articles ADD COLUMN content TEXT DEFAULT ''")
 
     def _get_conn(self) -> sqlite3.Connection:
         """获取数据库连接"""
@@ -134,7 +142,7 @@ class Database:
         with self._get_conn() as conn:
             try:
                 cursor = conn.execute(
-                    "INSERT INTO articles (source_id, title, url, author, published_at, summary, tags) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO articles (source_id, title, url, author, published_at, summary, content, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         article.source_id,
                         article.title,
@@ -142,6 +150,7 @@ class Database:
                         article.author,
                         article.published_at.isoformat() if article.published_at else None,
                         article.summary,
+                        article.content,
                         json.dumps(article.tags),
                     ),
                 )
@@ -155,6 +164,14 @@ class Database:
         """获取单篇文章"""
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM articles WHERE id = ?", (article_id,)).fetchone()
+            if row is None:
+                return None
+            return self._row_to_article(row)
+
+    def get_article_by_url(self, url: str) -> Article | None:
+        """通过URL获取文章"""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM articles WHERE url = ?", (url,)).fetchone()
             if row is None:
                 return None
             return self._row_to_article(row)
@@ -224,6 +241,14 @@ class Database:
             )
             return cursor.rowcount
 
+    def update_article_content(self, article_id: int, content: str) -> bool:
+        """更新文章全文内容"""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "UPDATE articles SET content = ? WHERE id = ?", (content, article_id)
+            )
+            return cursor.rowcount > 0
+
     # ===== 工具方法 =====
 
     def _row_to_source(self, row: sqlite3.Row) -> Source:
@@ -248,6 +273,7 @@ class Database:
             author=row["author"],
             published_at=datetime.fromisoformat(row["published_at"]) if row["published_at"] else None,
             summary=row["summary"] or "",
+            content=row["content"] or "",
             tags=json.loads(row["tags"]) if row["tags"] else [],
             is_read=bool(row["is_read"]),
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,

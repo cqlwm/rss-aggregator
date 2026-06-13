@@ -28,6 +28,7 @@ class Article:
     author: str | None = None
     published_at: datetime | None = None
     summary: str = ""
+    content: str = ""
     tags: list[str] = field(default_factory=list)
     is_read: bool = False
     created_at: datetime | None = None

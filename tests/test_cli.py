@@ -8,6 +8,7 @@ from click.testing import CliRunner
 
 from rss_aggregator.cli import cli
 from rss_aggregator.database import Database
+from rss_aggregator.models import Article, Source
 
 
 def get_test_runner():
@@ -176,3 +177,121 @@ def test_cron_status_not_installed(mock_is_installed):
     result = runner.invoke(cli, ["cron", "status"])
     assert result.exit_code == 0
     assert "定时任务未安装" in result.output
+
+
+@patch("rss_aggregator.cli.fetch_article_content")
+@patch("rss_aggregator.cli.get_db")
+def test_fetch_content_by_article_id(mock_get_db, mock_fetch):
+    """测试按文章ID抓取全文"""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = Path(f.name)
+
+    try:
+        db = Database(db_path)
+        mock_get_db.return_value = db
+
+        source = db.add_source(Source(url="https://example.com/rss", name="Test"))
+        article = db.add_article(
+            Article(
+                source_id=source.id,
+                title="Test Article",
+                url="https://example.com/article",
+            )
+        )
+
+        from rss_aggregator.scraper import ScrapeResult
+
+        mock_fetch.return_value = ScrapeResult(content="# Full Content", success=True)
+
+        runner = get_test_runner()
+        result = runner.invoke(cli, ["fetch-content", str(article.id)])
+        assert result.exit_code == 0
+        assert "已存储全文内容" in result.output
+
+        updated = db.get_article(article.id)
+        assert updated.content == "# Full Content"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@patch("rss_aggregator.cli.fetch_article_content")
+@patch("rss_aggregator.cli.get_db")
+def test_fetch_content_by_url(mock_get_db, mock_fetch):
+    """测试按URL抓取全文"""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = Path(f.name)
+
+    try:
+        db = Database(db_path)
+        mock_get_db.return_value = db
+
+        source = db.add_source(Source(url="https://example.com/rss", name="Test"))
+        article = db.add_article(
+            Article(
+                source_id=source.id,
+                title="Test Article",
+                url="https://example.com/article",
+            )
+        )
+
+        from rss_aggregator.scraper import ScrapeResult
+
+        mock_fetch.return_value = ScrapeResult(content="URL content", success=True)
+
+        runner = get_test_runner()
+        result = runner.invoke(cli, ["fetch-content", "https://example.com/article"])
+        assert result.exit_code == 0
+        assert "已匹配并更新文章" in result.output
+
+        updated = db.get_article(article.id)
+        assert updated.content == "URL content"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@patch("rss_aggregator.cli.fetch_article_content")
+def test_fetch_content_not_found(mock_fetch):
+    """测试文章不存在"""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = Path(f.name)
+
+    try:
+        with patch("rss_aggregator.cli.get_db") as mock_get_db:
+            mock_get_db.return_value = Database(db_path)
+
+            runner = get_test_runner()
+            result = runner.invoke(cli, ["fetch-content", "999"])
+            assert result.exit_code == 1
+            assert "未找到文章" in result.output
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@patch("rss_aggregator.cli.fetch_article_content")
+@patch("rss_aggregator.cli.get_db")
+def test_fetch_content_already_has_content(mock_get_db, mock_fetch):
+    """测试文章已有全文内容"""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = Path(f.name)
+
+    try:
+        db = Database(db_path)
+        mock_get_db.return_value = db
+
+        source = db.add_source(Source(url="https://example.com/rss", name="Test"))
+        article = db.add_article(
+            Article(
+                source_id=source.id,
+                title="Test Article",
+                url="https://example.com/article",
+                content="Existing content",
+            )
+        )
+
+        runner = get_test_runner()
+        result = runner.invoke(cli, ["fetch-content", str(article.id)])
+        assert result.exit_code == 0
+        assert "已有全文内容" in result.output
+        mock_fetch.assert_not_called()
+    finally:
+        db_path.unlink(missing_ok=True)

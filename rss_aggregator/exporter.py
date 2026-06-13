@@ -52,7 +52,10 @@ def _format_article(article: Article) -> list[str]:
     if meta:
         lines.append("- " + " | ".join(meta))
 
-    if article.summary:
+    if article.content:
+        lines.append("")
+        lines.append(article.content)
+    elif article.summary:
         summary = article.summary[:500]
         if len(article.summary) > 500:
             summary += "..."
@@ -82,6 +85,7 @@ def to_json(articles: list[Article], sources: dict[int, Source] | None = None) -
             "author": article.author,
             "published_at": article.published_at.isoformat() if article.published_at else None,
             "summary": article.summary,
+            "content": article.content,
             "tags": article.tags,
             "is_read": article.is_read,
         }
