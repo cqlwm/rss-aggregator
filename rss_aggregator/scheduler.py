@@ -2,17 +2,20 @@
 
 import logging
 import subprocess
-import sys
+import os
 from pathlib import Path
 
 from rss_aggregator.database import Database
 from rss_aggregator.fetcher import fetch_feed
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 CRON_MARKER = "# rss-aggregator cron job"
 LOG_FILE = Path.home() / ".rss-aggregator" / "cron.log"
+ENV_FILE = Path.home() / ".rss-aggregator" / ".env"
 
+load_dotenv(ENV_FILE)
 
 def fetch_all_sources(db: Database, limit: int | None = None) -> int:
     """抓取所有源的最新内容"""
@@ -63,7 +66,10 @@ def install_cron(interval_minutes: int = 60) -> bool:
     lines = [line for line in current_cron.splitlines() if CRON_MARKER not in line]
 
     project_dir = Path(__file__).parent.parent
-    cmd = f"uv run --project {project_dir} rss-aggregator fetch"
+    uv_path = os.getenv("UV_PATH")
+    if not uv_path:
+        raise ValueError("UV_PATH is not set in ~/.rss-aggregator/.env")
+    cmd = f"{uv_path} run --project {project_dir} rss-aggregator fetch"
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     if interval_minutes < 60:
